@@ -1,0 +1,655 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Invitación Mis 15 Años</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;700&family=Montserrat:wght@300;400;500&family=Satisfy&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Montserrat', sans-serif;
+      --tw-bg-opacity: 1;
+      background-color: rgb(253 246 240 / var(--tw-bg-opacity));
+    }
+    .font-dancing-script {
+      font-family: 'Dancing Script', cursive;
+    }
+    .font-satisfy {
+      font-family: 'Satisfy', cursive;
+    }
+    @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+    .animate-fade-in { animation: fade-in 0.3s ease-in-out; }
+    @keyframes scale-up { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    .animate-scale-up { animation: scale-up 0.3s ease-out forwards; }
+    @keyframes value-change {
+      from { transform: translateY(-20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    .animate-value-change { animation: value-change 0.5s ease-out; }
+     @keyframes fade-in-item {
+      from { opacity: 0; transform: scale(0.95); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    .animate-fade-in-item { animation: fade-in-item 0.4s ease-out forwards; }
+    .custom-scrollbar::-webkit-scrollbar { width: 8px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background-color: rgba(221, 160, 172, 0.5);
+      border-radius: 20px;
+      border: 3px solid transparent;
+    }
+  </style>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.3.1",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+    "@google/genai": "https://esm.sh/@google/genai@0.14.0",
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.44.4",
+    "react-dom/": "https://esm.sh/react-dom@^19.1.0/",
+    "react/": "https://esm.sh/react@^19.1.0/"
+  }
+}
+</script>
+</head>
+<body>
+  <div id="root"></div>
+
+<script type="module">
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import ReactDOM from 'react-dom/client';
+import { createClient } from '@supabase/supabase-js';
+import { GoogleGenAI } from '@google/genai';
+
+// --- Contenido de constants.ts ---
+const QUINCEANERA_NAME = "Sofía";
+const PARTY_DATE_OBJ = new Date("2025-09-04T21:00:00");
+const PARTY_DATE = "Jueves, 4 de Septiembre, 2025";
+const PARTY_TIME = "21:00 hs.";
+const PARTY_LOCATION_NAME = "Salón de Eventos 'Jardín Encantado'";
+const PARTY_ADDRESS = "Avenida de las Flores 123, Ciudad Jardín";
+const MAPS_URL = "https://www.google.com/maps/search/?api=1&query=Av+de+las+Flores+123+Ciudad+Jardin";
+const PHOTOS = [
+  "https://picsum.photos/id/1027/800/1200",
+  "https://picsum.photos/id/103/800/1200",
+  "https://picsum.photos/id/1047/800/1200",
+];
+
+// --- Contenido de utils/songUtils.ts ---
+const toTitleCase = (str) => {
+  if (!str) return str;
+  return str
+    .toLowerCase()
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+};
+const normalizeSongKey = (songName) => {
+  if (!songName) return '';
+  return songName
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, '');
+};
+const levenshteinDistance = (a, b) => {
+    if (a.length === 0) return b.length;
+    if (b.length === 0) return a.length;
+    const matrix = Array(b.length + 1).fill(null).map(() => Array(a.length + 1).fill(null));
+    for (let i = 0; i <= a.length; i++) matrix[0][i] = i;
+    for (let j = 0; j <= b.length; j++) matrix[j][0] = j;
+    for (let j = 1; j <= b.length; j++) {
+        for (let i = 1; i <= a.length; i++) {
+            const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+            matrix[j][i] = Math.min(matrix[j][i - 1] + 1, matrix[j - 1][i] + 1, matrix[j - 1][i - 1] + cost);
+        }
+    }
+    return matrix[b.length][a.length];
+};
+const processRecommendations = (data) => {
+  const fuzzyGroups = [];
+  data.forEach(rec => {
+    if (!rec.song_name || !rec.guest_name) return;
+    const currentSongKey = normalizeSongKey(rec.song_name);
+    if (!currentSongKey) return;
+    const capitalizedGuestName = toTitleCase(rec.guest_name.trim());
+    const originalName = toTitleCase(rec.song_name.trim());
+    let foundGroup = false;
+
+    for (const group of fuzzyGroups) {
+      const distance = levenshteinDistance(currentSongKey, group.key);
+      if (distance / Math.max(currentSongKey.length, group.key.length) < 0.20) {
+        group.originalNames.push(originalName);
+        group.guests.add(capitalizedGuestName);
+        if (currentSongKey.length > group.key.length) {
+            group.key = currentSongKey;
+        }
+        foundGroup = true;
+        break;
+      }
+    }
+    if (!foundGroup) {
+      fuzzyGroups.push({ key: currentSongKey, originalNames: [originalName], guests: new Set([capitalizedGuestName]) });
+    }
+  });
+
+  const processedList = fuzzyGroups.map(group => {
+    const nameCounts = new Map();
+    group.originalNames.forEach(name => nameCounts.set(name, (nameCounts.get(name) || 0) + 1));
+    let canonicalName = group.originalNames[0] || 'Canción Desconocida';
+    let maxCount = 0;
+    nameCounts.forEach((count, name) => {
+      if (count > maxCount) {
+        maxCount = count;
+        canonicalName = name;
+      } else if (count === maxCount && name.length > canonicalName.length) {
+        canonicalName = name;
+      }
+    });
+
+    const sortedGuests = Array.from(group.guests).sort();
+    return { key: group.key, song_name: canonicalName, count: sortedGuests.length, guests: sortedGuests };
+  });
+  return processedList.sort((a, b) => b.count - a.count);
+};
+
+
+// --- Contenido de services/supabaseClient.ts ---
+const supabaseUrl = 'https://rrrlmouxytovvhyxcqdy.supabase.co';
+const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJycmxtb3V4eXRvdnZoeXhjcWR5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI2NDIxMDUsImV4cCI6MjA2ODIxODEwNX0.rLrtjX_XZbYNx0HvY3CEGUULWauQt4SoWruyHpR-GE4';
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+// --- Contenido de services/geminiService.ts ---
+const getSongResponse = async (songName, guestName) => {
+  // En este entorno de un solo archivo HTML, no hay acceso a variables de entorno (process.env.API_KEY)
+  // Por lo tanto, esta función siempre devolverá el mensaje de respaldo.
+  console.warn("API_KEY no está disponible en este entorno. Usando mensaje de respaldo.");
+  return "¡Gracias por tu recomendación! La agregaré a mi playlist. 🎶";
+};
+
+
+// --- Componente Header.tsx ---
+const FlowerIcon = ({ className }) => (
+  React.createElement('svg', { className: className, xmlns: "http://www.w3.org/2000/svg", viewBox: "0 0 24 24", fill: "currentColor" },
+    React.createElement('path', { d: "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zM12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zm0 8c-1.65 0-3-1.35-3-3s1.35-3 3-3 3 1.35 3 3-1.35 3-3 3z" })
+  )
+);
+
+const Header = ({ name }) => {
+  return React.createElement('header', { className: "text-center py-8 border-b-2 border-dotted border-rose-200" },
+    React.createElement('h2', { className: "font-satisfy text-5xl text-rose-400" }, "Mis 15 Años"),
+    React.createElement('h1', { className: "font-dancing-script text-8xl text-amber-500 my-4", style: { textShadow: '2px 2px 4px rgba(0,0,0,0.1)' } }, name),
+    React.createElement('div', { className: "flex justify-center items-center space-x-4 mt-4" },
+      React.createElement('div', { className: "flex-grow h-px bg-rose-200" }),
+      React.createElement(FlowerIcon, { className: "w-6 h-6 text-rose-300" }),
+      React.createElement('div', { className: "flex-grow h-px bg-rose-200" })
+    )
+  );
+};
+
+// --- Componente MusicPlayer.tsx ---
+const SONG_URL = "https://res.cloudinary.com/dz25se1yc/video/upload/v1752688241/nzmdq3y8olfgotwjry2j.mp3";
+const SONG_NAME = "Tercer Cielo - No Crezcas Mas";
+
+const PlayIcon = ({ className }) => (
+    React.createElement('svg', { className: className, xmlns: "http://www.w3.org/2000/svg", viewBox: "0 0 24 24", fill: "currentColor" },
+        React.createElement('path', { d: "M8 5v14l11-7z" })
+    )
+);
+
+const PauseIcon = ({ className }) => (
+    React.createElement('svg', { className: className, xmlns: "http://www.w3.org/2000/svg", viewBox: "0 0 24 24", fill: "currentColor" },
+        React.createElement('path', { d: "M6 19h4V5H6v14zm8-14v14h4V5h-4z" })
+    )
+);
+
+const MusicPlayer = () => {
+    const [isPlaying, setIsPlaying] = useState(false);
+    const audioRef = useRef(null);
+
+    const togglePlayPause = () => {
+        if (audioRef.current) {
+            if (isPlaying) {
+                audioRef.current.pause();
+            } else {
+                audioRef.current.play();
+            }
+        }
+    };
+
+    useEffect(() => {
+        const audioEl = audioRef.current;
+        const handlePlay = () => setIsPlaying(true);
+        const handlePause = () => setIsPlaying(false);
+        if (audioEl) {
+            audioEl.addEventListener('play', handlePlay);
+            audioEl.addEventListener('pause', handlePause);
+            audioEl.addEventListener('ended', handlePause);
+            return () => {
+                audioEl.removeEventListener('play', handlePlay);
+                audioEl.removeEventListener('pause', handlePause);
+                audioEl.removeEventListener('ended', handlePause);
+            };
+        }
+    }, []);
+
+    return (
+        React.createElement('section', { className: "text-center" },
+            React.createElement('audio', { ref: audioRef, src: SONG_URL, preload: "auto" }),
+            React.createElement('div', { className: "bg-white/60 p-3 sm:p-4 rounded-xl shadow-lg flex items-center justify-between w-full max-w-sm mx-auto" },
+                React.createElement('p', { className: "font-medium text-amber-700 text-sm sm:text-base truncate pl-2", title: SONG_NAME }, SONG_NAME),
+                React.createElement('button', {
+                    onClick: togglePlayPause,
+                    className: "flex-shrink-0 bg-rose-400 text-white w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center shadow-md hover:bg-rose-500 transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-rose-400",
+                    'aria-label': isPlaying ? 'Pausar música' : 'Reproducir música'
+                  },
+                  isPlaying ? React.createElement(PauseIcon, { className: "w-5 h-5 sm:w-6 sm:h-6" }) : React.createElement(PlayIcon, { className: "w-5 h-5 sm:w-6 sm:h-6" })
+                )
+            )
+        )
+    );
+};
+
+
+// --- Componente Countdown.tsx ---
+const Countdown = () => {
+    const calculateTimeLeft = () => {
+        const difference = +PARTY_DATE_OBJ - +new Date();
+        let timeLeft = { dias: 0, horas: 0, minutos: 0 };
+        if (difference > 0) {
+            timeLeft = {
+                dias: Math.floor(difference / (1000 * 60 * 60 * 24)),
+                horas: Math.floor((difference / (1000 * 60 * 60)) % 24),
+                minutos: Math.floor((difference / 1000 / 60) % 60),
+            };
+        }
+        return timeLeft;
+    };
+    const [timeLeft, setTimeLeft] = useState(calculateTimeLeft());
+    useEffect(() => {
+        const timer = setInterval(() => setTimeLeft(calculateTimeLeft()), 1000);
+        return () => clearInterval(timer);
+    }, []);
+
+    const timeUnits = [
+        { label: 'Días', value: timeLeft.dias },
+        { label: 'Horas', value: timeLeft.horas },
+        { label: 'Minutos', value: timeLeft.minutos },
+    ];
+    const allZero = timeUnits.every(unit => unit.value === 0);
+
+    return React.createElement('section', { className: "py-8" },
+        React.createElement('h3', { className: "font-dancing-script text-4xl text-center text-rose-400 mb-6" }, "Falta muy poco..."),
+        React.createElement('div', { className: "flex flex-wrap justify-center items-center gap-4 sm:gap-8" },
+            allZero ?
+            React.createElement('div', { className: "text-2xl font-bold text-rose-500 animate-pulse" }, "¡El gran día llegó!") :
+            timeUnits.map(({ label, value }) => (
+                React.createElement('div', { key: label, className: "flex flex-col items-center justify-center bg-white/60 rounded-xl shadow-lg w-24 h-28 p-2 border border-rose-100/50" },
+                    React.createElement('div', { className: "relative h-16 w-full flex items-center justify-center overflow-hidden" },
+                        React.createElement('span', { key: `${label}-${value}`, className: "text-5xl font-bold text-amber-600 animate-value-change" },
+                            label === 'Días' ? value : String(value).padStart(2, '0')
+                        )
+                    ),
+                    React.createElement('span', { className: "text-sm uppercase text-rose-500 tracking-wider mt-1" }, label)
+                )
+            ))
+        )
+    );
+};
+
+// --- Componente InvitationDetails.tsx ---
+const CalendarIcon = () => React.createElement('svg', { xmlns: "http://www.w3.org/2000/svg", className: "h-10 w-10 text-rose-400", fill: "none", viewBox: "0 0 24 24", stroke: "currentColor", strokeWidth: 1.5 }, React.createElement('path', { strokeLinecap: "round", strokeLinejoin: "round", d: "M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" }));
+const LocationIcon = () => React.createElement('svg', { xmlns: "http://www.w3.org/2000/svg", className: "h-10 w-10 text-rose-400", fill: "none", viewBox: "0 0 24 24", stroke: "currentColor", strokeWidth: 1.5 }, React.createElement('path', { strokeLinecap: "round", strokeLinejoin: "round", d: "M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" }), React.createElement('path', { strokeLinecap: "round", strokeLinejoin: "round", d: "M15 11a3 3 0 11-6 0 3 3 0 016 0z" }));
+const DetailCard = ({ icon, title, children }) => (
+    React.createElement('div', { className: "bg-white/60 p-6 rounded-xl shadow-lg text-center flex flex-col items-center w-full transform hover:scale-105 transition-transform duration-300" },
+        React.createElement('div', { className: "mb-4" }, icon),
+        React.createElement('h3', { className: "text-xl font-semibold text-amber-600 mb-2" }, title),
+        React.createElement('div', { className: "text-base font-light text-gray-700" }, children)
+    )
+);
+const InvitationDetails = () => {
+    return (
+        React.createElement('section', { className: "grid grid-cols-1 gap-8" },
+            React.createElement(DetailCard, { icon: React.createElement(CalendarIcon), title: "Fecha y Hora" },
+                React.createElement('p', null, PARTY_DATE),
+                React.createElement('p', null, PARTY_TIME)
+            ),
+            React.createElement(DetailCard, { icon: React.createElement(LocationIcon), title: "Recepción" },
+                React.createElement('p', null, PARTY_LOCATION_NAME),
+                React.createElement('p', { className: "mb-4" }, PARTY_ADDRESS),
+                React.createElement('a', {
+                    href: MAPS_URL,
+                    target: "_blank",
+                    rel: "noopener noreferrer",
+                    className: "inline-block bg-rose-400 text-white px-6 py-2 rounded-full shadow-md hover:bg-rose-500 transition-colors duration-300 text-sm font-medium"
+                }, "Ver Ubicación en Mapa")
+            )
+        )
+    );
+};
+
+// --- Componente PhotoGallery.tsx ---
+const PhotoGallery = ({ photos }) => {
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
+
+  const openModal = useCallback((index) => {
+    setCurrentPhotoIndex(index);
+    setIsModalOpen(true);
+  }, []);
+
+  const closeModal = useCallback(() => setIsModalOpen(false), []);
+  const showNextPhoto = useCallback(() => setCurrentPhotoIndex((prev) => (prev + 1) % photos.length), [photos.length]);
+  const showPrevPhoto = useCallback(() => setCurrentPhotoIndex((prev) => (prev - 1 + photos.length) % photos.length), [photos.length]);
+
+  return React.createElement(React.Fragment, null,
+    React.createElement('section', null,
+      React.createElement('h3', { className: "font-dancing-script text-4xl text-center text-rose-400 mb-6" }, "Mis Recuerdos"),
+      React.createElement('div', { className: "grid grid-cols-3 gap-2 sm:gap-4" },
+        photos.map((photo, index) => (
+          React.createElement('div', { key: index, className: "aspect-[2/3] overflow-hidden rounded-lg shadow-lg cursor-pointer transform hover:scale-105 transition-transform duration-300", onClick: () => openModal(index) },
+            React.createElement('img', { src: photo, alt: `Recuerdo ${index + 1}`, className: "w-full h-full object-cover" })
+          )
+        ))
+      )
+    ),
+    isModalOpen && React.createElement('div', { className: "fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 animate-fade-in", onClick: closeModal },
+      React.createElement('button', { onClick: closeModal, className: "absolute top-4 right-4 text-white text-4xl font-bold z-50", 'aria-label': "Cerrar" }, "×"),
+      React.createElement('div', { className: "relative w-full h-full flex items-center justify-center p-4", onClick: (e) => e.stopPropagation() },
+        React.createElement('button', { onClick: showPrevPhoto, className: "absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 text-white bg-black/30 rounded-full p-2 hover:bg-black/50 transition z-50", 'aria-label': "Anterior" },
+          React.createElement('svg', { xmlns: "http://www.w3.org/2000/svg", className: "h-8 w-8", fill: "none", viewBox: "0 0 24 24", stroke: "currentColor" }, React.createElement('path', { strokeLinecap: "round", strokeLinejoin: "round", strokeWidth: 2, d: "M15 19l-7-7 7-7" }))
+        ),
+        React.createElement('img', { src: photos[currentPhotoIndex], alt: `Recuerdo ${currentPhotoIndex + 1} en grande`, className: "max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl" }),
+        React.createElement('button', { onClick: showNextPhoto, className: "absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 text-white bg-black/30 rounded-full p-2 hover:bg-black/50 transition z-50", 'aria-label': "Siguiente" },
+          React.createElement('svg', { xmlns: "http://www.w3.org/2000/svg", className: "h-8 w-8", fill: "none", viewBox: "0 0 24 24", stroke: "currentColor" }, React.createElement('path', { strokeLinecap: "round", strokeLinejoin: "round", strokeWidth: 2, d: "M9 5l7 7-7 7" }))
+        )
+      )
+    )
+  );
+};
+
+
+// --- Componente DniSongModal.tsx ---
+const DniSongModal = ({ isOpen, onClose, songName, onSuccess }) => {
+    const [dni, setDni] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState(null);
+
+    const handleSubmit = useCallback(async (event) => {
+        event.preventDefault();
+        if (!dni.trim()) { setError("Por favor, ingresa tu DNI."); return; }
+        setIsLoading(true);
+        setError(null);
+        try {
+            const { data: guestData, error: findError } = await supabase.from('confirmed_guests').select('first_name').eq('dni', dni.trim()).single();
+            if (findError || !guestData) {
+                setError("Lo siento, no estás en la lista de invitados. No podés recomendar canciones.");
+                setIsLoading(false);
+                return;
+            }
+            const guestName = guestData.first_name;
+            const trimmedSongName = toTitleCase(songName.trim());
+            const { count, error: checkError } = await supabase.from('song_recommendations').select('*', { count: 'exact', head: true }).eq('guest_name', guestName).ilike('song_name', trimmedSongName);
+            if (checkError) throw new Error("Error al verificar la recomendación.");
+            if (count && count > 0) {
+                setError(`${guestName}, ya has recomendado esta canción. ¿Quieres recomendar otra?`);
+                setIsLoading(false);
+                return;
+            }
+            const [geminiResponse, supabaseResult] = await Promise.all([
+                getSongResponse(trimmedSongName, guestName),
+                supabase.from('song_recommendations').insert([{ guest_name: guestName, song_name: trimmedSongName }])
+            ]);
+            if (supabaseResult.error) throw new Error("Error al guardar la recomendación.");
+            onSuccess(geminiResponse);
+        } catch (err) {
+            setError("Ocurrió un error al enviar tu recomendación. Por favor, intenta de nuevo.");
+        } finally {
+            setIsLoading(false);
+        }
+    }, [dni, songName, onSuccess, onClose]);
+
+    if (!isOpen) return null;
+
+    return React.createElement('div', { className: "fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4 animate-fade-in", onClick: onClose, role: "dialog", 'aria-modal': "true", 'aria-labelledby': "modal-title-song" },
+        React.createElement('div', { className: "bg-[#FDF6F0] rounded-2xl shadow-2xl p-8 w-full max-w-sm text-[#5D504A] transform transition-transform duration-300 scale-95 animate-scale-up", onClick: (e) => e.stopPropagation() },
+            React.createElement('button', { onClick: onClose, className: "absolute top-4 right-4 text-gray-400 hover:text-gray-600 text-3xl transition-colors", 'aria-label': "Cerrar" }, "×"),
+            React.createElement('h2', { id: "modal-title-song", className: "font-dancing-script text-4xl text-rose-400 mb-4 text-center" }, "Identifícate"),
+            React.createElement('form', { onSubmit: handleSubmit, className: "flex flex-col gap-4 items-center" },
+                React.createElement('p', { className: "text-center font-light mb-2" }, "Ingresa tu DNI para validar tu recomendación."),
+                React.createElement('input', { type: "text", value: dni, onChange: (e) => { setDni(e.target.value.replace(/[^0-9]/g, '')); if (error) setError(null); }, placeholder: "DNI (sin puntos)", className: "w-full px-4 py-3 rounded-full border border-rose-200 focus:outline-none focus:ring-2 focus:ring-rose-300 transition text-center", disabled: isLoading, 'aria-label': "DNI", inputMode: "numeric", pattern: "[0-9]*", autoFocus: true }),
+                React.createElement('button', { type: "submit", className: "w-full bg-amber-500 text-white font-medium px-8 py-3 rounded-full shadow-md hover:bg-amber-600 transition-colors duration-300 disabled:bg-amber-300 disabled:cursor-not-allowed flex items-center justify-center", disabled: isLoading },
+                    isLoading ? "Enviando..." : "Enviar Recomendación"
+                ),
+                error && React.createElement('p', { className: "text-red-500 mt-2 text-sm text-center" }, error)
+            )
+        )
+    );
+};
+
+
+// --- Componente SongRecommendation.tsx ---
+const MusicIcon = () => React.createElement('svg', { xmlns: "http://www.w3.org/2000/svg", className: "h-6 w-6 inline-block mr-2", fill: "none", viewBox: "0 0 24 24", stroke: "currentColor", strokeWidth: 2 }, React.createElement('path', { strokeLinecap: "round", strokeLinejoin: "round", d: "M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-13c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z" }));
+const SongRecommendation = () => {
+  const [songName, setSongName] = useState('');
+  const [responseMessage, setResponseMessage] = useState(null);
+  const [error, setError] = useState(null);
+  const [isDniModalOpen, setIsDniModalOpen] = useState(false);
+  const [allSongs, setAllSongs] = useState([]);
+  const [suggestions, setSuggestions] = useState([]);
+  const [isSuggestionsVisible, setIsSuggestionsVisible] = useState(false);
+
+  useEffect(() => {
+    const fetchAllSongs = async () => {
+      const { data } = await supabase.from('song_recommendations').select('guest_name, song_name');
+      if (data) {
+        const processed = processRecommendations(data);
+        const uniqueSongNames = [...new Set(processed.map(p => p.song_name))].sort();
+        setAllSongs(uniqueSongNames);
+      }
+    };
+    fetchAllSongs();
+  }, []);
+
+  const handleSubmit = useCallback((event) => {
+    event.preventDefault();
+    if (!songName.trim()) { setError("Por favor, escribe el nombre de una canción."); return; }
+    setError(null);
+    setResponseMessage(null);
+    setIsSuggestionsVisible(false);
+    setIsDniModalOpen(true);
+  }, [songName]);
+
+  const handleRecommendationSuccess = useCallback((message) => {
+    setIsDniModalOpen(false);
+    setResponseMessage(message);
+    setSongName('');
+    setSuggestions([]);
+  }, []);
+
+  const handleSongInputChange = (e) => {
+    const value = e.target.value;
+    setSongName(value);
+    if(error) setError(null);
+
+    if (value.trim().length > 1) {
+        const inputWords = value.trim().toLowerCase().split(' ').filter(Boolean);
+        
+        const filtered = allSongs.filter(song => {
+            const songTitleLower = song.toLowerCase();
+            
+            return inputWords.every(inputWord => {
+                // Fast path: check if the word is a substring of the whole title
+                if (songTitleLower.includes(inputWord)) {
+                    return true;
+                }
+                
+                // Slow path: fuzzy match against individual words in the song title
+                const songWords = songTitleLower.split(' ').filter(Boolean);
+                return songWords.some(songWord => {
+                    const distance = levenshteinDistance(inputWord, songWord);
+                    let tolerance = 0;
+                    if (inputWord.length >= 8) tolerance = 2;
+                    else if (inputWord.length >= 4) tolerance = 1;
+                    return distance <= tolerance;
+                });
+            });
+        });
+
+        setSuggestions(filtered.slice(0, 5));
+        setIsSuggestionsVisible(true);
+    } else {
+        setSuggestions([]);
+        setIsSuggestionsVisible(false);
+    }
+  };
+
+  const handleSuggestionClick = (suggestion) => {
+    setSongName(suggestion);
+    setSuggestions([]);
+    setIsSuggestionsVisible(false);
+  };
+
+  return React.createElement(React.Fragment, null,
+    React.createElement('section', { className: "bg-white/60 p-8 rounded-xl shadow-lg text-center" },
+      React.createElement('h3', { className: "font-dancing-script text-4xl text-rose-400 mb-2" }, "¡La Playlist Perfecta!"),
+      !responseMessage ? React.createElement(React.Fragment, null,
+        React.createElement('p', { className: "mb-6 font-light" }, "¿Qué canción no puede faltar en la pista de baile?"),
+        React.createElement('form', { onSubmit: handleSubmit, className: "flex flex-col gap-4 items-center justify-center w-full max-w-sm mx-auto" },
+          React.createElement('div', { className: "relative w-full" },
+            React.createElement('input', { type: "text", value: songName, onChange: handleSongInputChange, onBlur: () => setTimeout(() => setIsSuggestionsVisible(false), 150), onFocus: handleSongInputChange, placeholder: "Nombre de la canción", className: "w-full px-4 py-3 rounded-full border border-rose-200 focus:outline-none focus:ring-2 focus:ring-rose-300 transition", 'aria-label': "Nombre de la canción", autoComplete: "off" }),
+            isSuggestionsVisible && suggestions.length > 0 && React.createElement('ul', { className: "absolute z-10 w-full bg-white border border-rose-200 rounded-lg mt-1 shadow-lg max-h-48 overflow-y-auto text-left" },
+              suggestions.map((suggestion, index) => React.createElement('li', { key: index, className: "px-4 py-2 cursor-pointer hover:bg-rose-50 transition-colors", onClick: () => handleSuggestionClick(suggestion) }, suggestion))
+            )
+          ),
+          React.createElement('button', { type: "submit", className: "w-full bg-amber-500 text-white font-medium px-8 py-3 rounded-full shadow-md hover:bg-amber-600 transition-colors duration-300 flex items-center justify-center" },
+            React.createElement(MusicIcon), " Recomendar"
+          )
+        )
+      ) : React.createElement('div', { className: "text-center p-4 bg-rose-100 rounded-lg" },
+        React.createElement('p', { className: "text-lg text-rose-600 font-medium" }, responseMessage),
+        React.createElement('button', { onClick: () => setResponseMessage(null), className: "mt-4 text-sm text-rose-500 hover:underline" }, "Recomendar otra canción")
+      ),
+      error && React.createElement('p', { className: "text-red-500 mt-4" }, error)
+    ),
+    React.createElement(DniSongModal, { isOpen: isDniModalOpen, onClose: () => setIsDniModalOpen(false), songName: songName, onSuccess: handleRecommendationSuccess })
+  );
+};
+
+
+// --- Componente DniConfirmationModal.tsx ---
+const DniConfirmationModal = ({ isOpen, onClose }) => {
+    const [dni, setDni] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState(null);
+    const [successMessage, setSuccessMessage] = useState(null);
+
+    useEffect(() => {
+        if (!isOpen) {
+            setTimeout(() => {
+                setDni(''); setError(null); setSuccessMessage(null); setIsLoading(false);
+            }, 300);
+        }
+    }, [isOpen]);
+
+    const handleSubmit = useCallback(async (event) => {
+        event.preventDefault();
+        if (!dni.trim()) { setError("Por favor, ingresa tu DNI."); return; }
+        setIsLoading(true); setError(null); setSuccessMessage(null);
+        try {
+            const { data: guestData, error: findError } = await supabase.from('confirmed_guests').select('first_name, has_confirmed').eq('dni', dni.trim()).single();
+            if (findError || !guestData) {
+                setError("Tu DNI no se encuentra en la lista de invitados. Por favor, contacta al anfitrión.");
+                setIsLoading(false); return;
+            }
+            if (guestData.has_confirmed) {
+                setSuccessMessage(`¡Hola ${guestData.first_name}! Ya habías confirmado tu asistencia. ¡Nos vemos en la fiesta!`);
+                setIsLoading(false); return;
+            }
+            const { error: updateError } = await supabase.from('confirmed_guests').update({ has_confirmed: true }).eq('dni', dni.trim());
+            if (updateError) throw updateError;
+            setSuccessMessage(`¡Confirmación exitosa, ${guestData.first_name}! Gracias por confirmar, te esperamos.`);
+        } catch (err) {
+            setError("Ocurrió un error al confirmar. Por favor, intenta de nuevo.");
+        } finally {
+            setIsLoading(false);
+        }
+    }, [dni]);
+
+    if (!isOpen) return null;
+
+    return React.createElement('div', { className: "fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4 animate-fade-in", onClick: onClose, role: "dialog", 'aria-modal': "true", 'aria-labelledby': "modal-title" },
+        React.createElement('div', { className: "bg-[#FDF6F0] rounded-2xl shadow-2xl p-8 w-full max-w-sm text-[#5D504A] transform transition-transform duration-300 scale-95 animate-scale-up", onClick: (e) => e.stopPropagation() },
+            React.createElement('button', { onClick: onClose, className: "absolute top-4 right-4 text-gray-400 hover:text-gray-600 text-3xl transition-colors", 'aria-label': "Cerrar" }, "×"),
+            React.createElement('h2', { id: "modal-title", className: "font-dancing-script text-4xl text-rose-400 mb-4 text-center" }, "Confirmar Asistencia"),
+            successMessage ? React.createElement('div', { className: "text-center py-4" },
+                React.createElement('p', { className: "text-lg text-green-600 font-medium" }, successMessage),
+                React.createElement('button', { onClick: onClose, className: "mt-6 w-full bg-rose-400 text-white font-medium px-8 py-3 rounded-full shadow-md hover:bg-rose-500 transition-colors duration-300" }, "Cerrar")
+            ) : React.createElement('form', { onSubmit: handleSubmit, className: "flex flex-col gap-4 items-center" },
+                React.createElement('p', { className: "text-center font-light mb-2" }, "Ingresa tu número de DNI para confirmar tu lugar en la fiesta."),
+                React.createElement('input', { type: "text", value: dni, onChange: (e) => { setDni(e.target.value.replace(/[^0-9]/g, '')); if (error) setError(null); }, placeholder: "DNI (sin puntos)", className: "w-full px-4 py-3 rounded-full border border-rose-200 focus:outline-none focus:ring-2 focus:ring-rose-300 transition text-center", disabled: isLoading, 'aria-label': "DNI", inputMode: "numeric", pattern: "[0-9]*", autoFocus: true }),
+                React.createElement('button', { type: "submit", className: "w-full bg-amber-500 text-white font-medium px-8 py-3 rounded-full shadow-md hover:bg-amber-600 transition-colors duration-300 disabled:bg-amber-300 disabled:cursor-not-allowed flex items-center justify-center", disabled: isLoading },
+                    isLoading ? "Verificando..." : "Confirmar"
+                ),
+                error && React.createElement('p', { className: "text-red-500 mt-2 text-sm text-center" }, error)
+            )
+        )
+    );
+};
+
+
+// --- Componente principal App.tsx ---
+const App = () => {
+  const [isConfirmationModalOpen, setIsConfirmationModalOpen] = useState(false);
+
+  return (
+    React.createElement('div', { className: "bg-[#FDF6F0] min-h-screen text-[#5D504A] antialiased py-4" },
+      React.createElement('div', {
+        className: "fixed inset-0 bg-no-repeat bg-cover bg-top md:bg-contain md:bg-center opacity-40",
+        style: { backgroundImage: "url('https://img.freepik.com/foto-gratis/chica-sonriente-tiro-medio-hermoso-vestido_52683-86468.jpg')" }
+      }),
+      React.createElement('div', { className: "relative z-10 max-w-md mx-auto p-6 space-y-8" },
+        React.createElement(Header, { name: QUINCEANERA_NAME }),
+        React.createElement(MusicPlayer),
+        React.createElement('main', { className: "space-y-12" },
+          React.createElement('section', { className: "text-center" },
+            React.createElement('p', { className: "text-xl italic font-bold leading-relaxed" },
+              "Con la bendición de mis padres, tengo el honor de invitarlos a celebrar un sueño hecho realidad, la mágica noche de mis 15 años."
+            )
+          ),
+          React.createElement(Countdown),
+          React.createElement(InvitationDetails),
+          React.createElement(PhotoGallery, { photos: PHOTOS }),
+          React.createElement(SongRecommendation)
+        ),
+        React.createElement('footer', { className: "text-center py-8" },
+          React.createElement('p', { className: "font-dancing-script text-4xl text-rose-400 mb-4" }, "¡Te espero!"),
+          React.createElement('p', { className: "text-lg font-light mb-6" }, "Tu presencia será el mejor regalo."),
+          React.createElement('button', {
+            onClick: () => setIsConfirmationModalOpen(true),
+            className: "bg-rose-400 text-white font-medium px-8 py-3 rounded-full shadow-md hover:bg-rose-500 transition-colors duration-300"
+          }, "Confirmar asistencia")
+        )
+      ),
+      React.createElement(DniConfirmationModal, {
+        isOpen: isConfirmationModalOpen,
+        onClose: () => setIsConfirmationModalOpen(false)
+      })
+    )
+  );
+};
+
+
+// --- Punto de entrada, como index.tsx ---
+const rootElement = document.getElementById('root');
+const root = ReactDOM.createRoot(rootElement);
+root.render(React.createElement(React.StrictMode, null, React.createElement(App)));
+
+</script>
+
+</body>
+</html>
